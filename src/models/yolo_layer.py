@@ -152,7 +152,7 @@ class YoloLayer(nn.Module):
         self.use_giou_loss = use_giou_loss
         self.device = x.device
         num_samples, _, _, grid_size = x.size()
-
+        
         prediction = x.view(num_samples, self.num_anchors, self.num_classes + 7, grid_size, grid_size)
         prediction = prediction.permute(0, 1, 3, 4, 2).contiguous()
         # prediction size: [num_samples, num_anchors, grid_size, grid_size, num_classes + 7]
@@ -195,28 +195,35 @@ class YoloLayer(nn.Module):
             self.reduction = 'mean'
             iou_scores, giou_loss, class_mask, obj_mask, noobj_mask, tx, ty, tw, th, tim, tre, tcls, tconf = self.build_targets(
                 pred_boxes=pred_boxes, pred_cls=pred_cls, target=targets, anchors=self.scaled_anchors)
+            
 
-            loss_x = F.mse_loss(pred_x[obj_mask], tx[obj_mask], reduction=self.reduction)
-            loss_y = F.mse_loss(pred_y[obj_mask], ty[obj_mask], reduction=self.reduction)
-            loss_w = F.mse_loss(pred_w[obj_mask], tw[obj_mask], reduction=self.reduction)
-            loss_h = F.mse_loss(pred_h[obj_mask], th[obj_mask], reduction=self.reduction)
-            loss_im = F.mse_loss(pred_im[obj_mask], tim[obj_mask], reduction=self.reduction)
-            loss_re = F.mse_loss(pred_re[obj_mask], tre[obj_mask], reduction=self.reduction)
+            loss_x = torch.nan_to_num(F.mse_loss(pred_x[obj_mask], tx[obj_mask], reduction=self.reduction))
+            loss_y = torch.nan_to_num(F.mse_loss(pred_y[obj_mask], ty[obj_mask], reduction=self.reduction))
+            loss_w = torch.nan_to_num(F.mse_loss(pred_w[obj_mask], tw[obj_mask], reduction=self.reduction))
+            loss_h = torch.nan_to_num(F.mse_loss(pred_h[obj_mask], th[obj_mask], reduction=self.reduction))
+            loss_im = torch.nan_to_num(F.mse_loss(pred_im[obj_mask], tim[obj_mask], reduction=self.reduction))
+            loss_re = torch.nan_to_num(F.mse_loss(pred_re[obj_mask], tre[obj_mask], reduction=self.reduction))
             loss_im_re = (1. - torch.sqrt(pred_im[obj_mask] ** 2 + pred_re[obj_mask] ** 2)) ** 2  # as tim^2 + tre^2 = 1
             loss_im_re_red = loss_im_re.sum() if self.reduction == 'sum' else loss_im_re.mean()
-            loss_eular = loss_im + loss_re + loss_im_re_red
 
-            loss_conf_obj = F.binary_cross_entropy(pred_conf[obj_mask], tconf[obj_mask], reduction=self.reduction)
-            loss_conf_noobj = F.binary_cross_entropy(pred_conf[noobj_mask], tconf[noobj_mask], reduction=self.reduction)
-            loss_cls = F.binary_cross_entropy(pred_cls[obj_mask], tcls[obj_mask], reduction=self.reduction)
+            # If there's no target aka the image has no object
+            # loss_im_re is empty tensor
+            if loss_im_re.nelement() != 0:    
+                loss_eular = loss_im + loss_re + loss_im_re_red
+            else:
+                loss_eular = loss_im + loss_re
 
+            loss_conf_obj = torch.nan_to_num(F.binary_cross_entropy(pred_conf[obj_mask], tconf[obj_mask], reduction=self.reduction))
+            loss_conf_noobj = torch.nan_to_num(F.binary_cross_entropy(pred_conf[noobj_mask], tconf[noobj_mask], reduction=self.reduction))
+            loss_cls = torch.nan_to_num(F.binary_cross_entropy(pred_cls[obj_mask], tcls[obj_mask], reduction=self.reduction))
+            
             if self.use_giou_loss:
                 loss_obj = loss_conf_obj + loss_conf_noobj
                 total_loss = giou_loss * self.lgiou_scale + loss_eular * self.leular_scale + loss_obj * self.lobj_scale + loss_cls * self.lcls_scale
             else:
                 loss_obj = self.obj_scale * loss_conf_obj + self.noobj_scale * loss_conf_noobj
                 total_loss = loss_x + loss_y + loss_w + loss_h + loss_eular + loss_obj + loss_cls
-
+    
                 # Metrics (store loss values using tensorboard)
             cls_acc = 100 * class_mask[obj_mask].mean()
             conf_obj = pred_conf[obj_mask].mean()

@@ -34,14 +34,24 @@ def removePoints(PointCloud, BoundaryCond):
     return PointCloud
 
 
-def makeBVFeature(PointCloud_, Discretization, bc):
+def makeBVFeature(PointCloud_, Discretization_X, Discretization_Y, bc):
     Height = cnf.BEV_HEIGHT + 1
     Width = cnf.BEV_WIDTH + 1
 
     # Discretize Feature Map
+    # Original way
+    # PointCloud = np.copy(PointCloud_)
+    # PointCloud[:, 0] = np.int_(np.floor(PointCloud[:, 0] / Discretization))
+    # PointCloud[:, 1] = np.int_(np.floor(PointCloud[:, 1] / Discretization) + Width / 2)
+
+    # More generalized way
     PointCloud = np.copy(PointCloud_)
-    PointCloud[:, 0] = np.int_(np.floor(PointCloud[:, 0] / Discretization))
-    PointCloud[:, 1] = np.int_(np.floor(PointCloud[:, 1] / Discretization) + Width / 2)
+
+    offset_x = np.int_(np.floor(bc['minX'] / Discretization_X))
+    offset_y = np.int_(np.floor(bc['minY'] / Discretization_Y))
+    
+    PointCloud[:, 0] = np.int_(np.floor(PointCloud[:, 0] / Discretization_X)) - offset_x
+    PointCloud[:, 1] = np.int_(np.floor(PointCloud[:, 1] / Discretization_Y)) - offset_y
 
     # sort-3times
     indices = np.lexsort((-PointCloud[:, 2], PointCloud[:, 1], PointCloud[:, 0]))
@@ -124,7 +134,7 @@ def build_yolo_target(labels):
     target = []
     for i in range(labels.shape[0]):
         cl, x, y, z, h, w, l, yaw = labels[i]
-        # ped and cyc labels are very small, so lets add some factor to height/width
+        # ped and cyc labels are very small, so lets add some factor to length/width
         l = l + 0.3
         w = w + 0.3
         yaw = np.pi * 2 - yaw
@@ -133,11 +143,12 @@ def build_yolo_target(labels):
             x1 = (x - bc["minX"]) / (bc["maxX"] - bc["minX"])  # we should put this in [0,1], so divide max_size  40 m
             w1 = w / (bc["maxY"] - bc["minY"])
             l1 = l / (bc["maxX"] - bc["minX"])
+                                                #im,                    real
             target.append([cl, y1, x1, w1, l1, math.sin(float(yaw)), math.cos(float(yaw))])
 
     return np.array(target, dtype=np.float32)
 
-
+# TODO: They hard code height here, might need to change for our task
 def inverse_yolo_target(targets, bc):
     labels = []
     for t in targets:

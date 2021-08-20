@@ -8,7 +8,7 @@ from __future__ import print_function
 
 import numpy as np
 import cv2
-
+import config.kitti_config as cnf
 
 class Object3d(object):
     ''' 3d object label '''
@@ -44,16 +44,16 @@ class Object3d(object):
     def cls_type_to_id(self, cls_type):
         # Car and Van ==> Car class
         # Pedestrian and Person_Sitting ==> Pedestrian Class
-        CLASS_NAME_TO_ID = {
-            'Car': 0,
-            'Pedestrian': 1,
-            'Cyclist': 2,
-            'Van': 0,
-            'Person_sitting': 1
-        }
-        if cls_type not in CLASS_NAME_TO_ID.keys():
+        # CLASS_NAME_TO_ID = {
+        #     'Car': 0,
+        #     'Pedestrian': 1,
+        #     'Cyclist': 2,
+        #     'Van': 0,
+        #     'Person_sitting': 1
+        # }
+        if cls_type not in cnf.CLASS_NAME_TO_ID.keys():
             return -1
-        return CLASS_NAME_TO_ID[cls_type]
+        return cnf.CLASS_NAME_TO_ID[cls_type]
 
     def get_obj_level(self):
         height = float(self.box2d[3]) - float(self.box2d[1]) + 1

@@ -13,6 +13,8 @@ from __future__ import division
 import sys
 
 import torch
+from shapely import speedups
+speedups.disable()
 from shapely.geometry import Polygon
 from scipy.spatial import ConvexHull
 

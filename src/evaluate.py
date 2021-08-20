@@ -17,8 +17,8 @@ sys.path.append('./')
 from data_process.kitti_dataloader import create_val_dataloader
 from models.model_utils import create_model
 from utils.misc import AverageMeter, ProgressMeter
-from utils.evaluation_utils import post_processing, get_batch_statistics_rotated_bbox, ap_per_class, load_classes, post_processing_v2
-
+from utils.evaluation_utils import post_processing_v2, get_batch_statistics_rotated_bbox, ap_per_class, load_classes, post_processing_v2
+import config.kitti_config as cnf
 
 def evaluate_mAP(val_loader, model, configs, logger):
     batch_time = AverageMeter('Time', ':6.3f')
@@ -105,7 +105,7 @@ def parse_eval_configs():
     ##############Dataset, Checkpoints, and results dir configs#########
     ####################################################################
     configs.working_dir = '../'
-    configs.dataset_dir = os.path.join(configs.working_dir, 'dataset', 'kitti')
+    configs.dataset_dir = cnf.dataset_dir
 
     return configs
 
@@ -119,13 +119,23 @@ if __name__ == '__main__':
     # model.print_network()
     print('\n\n' + '-*=' * 30 + '\n\n')
     assert os.path.isfile(configs.pretrained_path), "No file at {}".format(configs.pretrained_path)
-    model.load_state_dict(torch.load(configs.pretrained_path))
+    model.load_state_dict(torch.load(configs.pretrained_path, map_location="cuda:0"))
 
     configs.device = torch.device('cpu' if configs.no_cuda else 'cuda:{}'.format(configs.gpu_idx))
     model = model.to(device=configs.device)
 
     model.eval()
     print('Create the validation dataloader')
+
+    # Just to test out some custom config for validation dataloader
+    configs.batch_size = 1
+    configs.hflip_prob = 0.5
+    configs.multiscale_training = False
+    configs.cutout_nholes = 1
+    configs.cutout_prob = 0.
+    configs.cutout_fill_value = 0.
+    configs.cutout_ratio = 0.3
+
     val_dataloader = create_val_dataloader(configs)
 
     print("\nStart computing mAP...\n")

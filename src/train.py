@@ -4,6 +4,9 @@ import sys
 import random
 import os
 import warnings
+import cv2
+import copy
+from easydict import EasyDict as edict
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -16,13 +19,17 @@ from tqdm import tqdm
 
 sys.path.append('./')
 
+import config.kitti_config as cnf
+from data_process import kitti_data_utils, kitti_bev_utils
 from data_process.kitti_dataloader import create_train_dataloader, create_val_dataloader
 from models.model_utils import create_model, make_data_parallel, get_num_parameters
+from utils.evaluation_utils import post_processing_v2, rescale_boxes
 from utils.train_utils import create_optimizer, create_lr_scheduler, get_saved_state, save_checkpoint
 from utils.train_utils import reduce_tensor, to_python_float, get_tensorboard_log
 from utils.misc import AverageMeter, ProgressMeter
 from utils.logger import Logger
 from config.train_config import parse_train_configs
+from utils.visualization_utils import show_image_with_boxes, merge_rgb_to_bev, predictions_to_kitti_format
 from evaluate import evaluate_mAP
 
 
@@ -146,7 +153,7 @@ def main_worker(gpu_idx, configs):
             train_sampler.set_epoch(epoch)
         # train for one epoch
         train_one_epoch(train_dataloader, model, optimizer, lr_scheduler, epoch, configs, logger, tb_writer)
-        if not configs.no_val:
+        if not configs.no_val and epoch > 20:
             val_dataloader = create_val_dataloader(configs)
             print('number of batches in val_dataloader: {}'.format(len(val_dataloader)))
             precision, recall, AP, f1, ap_class = evaluate_mAP(val_dataloader, model, configs, logger)
@@ -164,6 +171,19 @@ def main_worker(gpu_idx, configs):
         if configs.is_master_node and ((epoch % configs.checkpoint_freq) == 0):
             model_state_dict, utils_state_dict = get_saved_state(model, optimizer, lr_scheduler, epoch, configs)
             save_checkpoint(configs.checkpoints_dir, configs.saved_fn, model_state_dict, utils_state_dict, epoch)
+            
+            # Add tensorboard visualization here
+            # Validation
+            if epoch != 0:
+                vis_images = inference_val(configs, model, num_img = 12)
+            
+                if tb_writer is not None:
+                    tb_writer.add_images(
+                        "Validation",
+                        vis_images,
+                        epoch,
+                        dataformats='NHWC'
+                    )
 
         if not configs.step_lr_in_epoch:
             lr_scheduler.step()
@@ -179,6 +199,56 @@ def main_worker(gpu_idx, configs):
 def cleanup():
     dist.destroy_process_group()
 
+def inference_val(configs, model, num_img):
+    model.eval()
+
+    cfg = copy.deepcopy(configs)
+
+    cfg.batch_size = 1
+    
+    val_dataloader = create_val_dataloader(cfg)
+
+    batch_images = []
+    
+    for batch_idx, (img_paths, imgs_bev, targets) in enumerate(val_dataloader):
+        input_imgs = imgs_bev.to(device=cfg.device).float()
+        outputs = model(input_imgs)
+        detections = post_processing_v2(outputs, conf_thresh=configs.conf_thresh, nms_thresh=configs.nms_thresh)
+
+        img_detections = []  # Stores detections for each image index
+        img_detections.extend(detections)
+
+        img_bev = imgs_bev.squeeze() * 255
+        img_bev = img_bev.permute(1, 2, 0).numpy().astype(np.uint8)
+        img_bev = cv2.resize(img_bev, (cfg.img_size, cfg.img_size))
+        for detections in img_detections:
+            if detections is None:
+                continue
+            # Rescale boxes to original image
+            detections = rescale_boxes(detections, cfg.img_size, img_bev.shape[:2])
+            for x, y, w, l, im, re, *_, cls_pred in detections:
+                yaw = np.arctan2(im, re)
+                # Draw rotated box
+                kitti_bev_utils.drawRotatedBox(img_bev, x, y, w, l, yaw, cnf.colors[int(cls_pred)])
+
+        img_rgb = cv2.imread(img_paths[0])
+        calib = kitti_data_utils.Calibration(img_paths[0].replace(".png", ".txt").replace("image_2", "calib"))
+        objects_pred = predictions_to_kitti_format(img_detections, calib, img_rgb.shape, cfg.img_size)
+        img_rgb = show_image_with_boxes(img_rgb, objects_pred, calib, False)
+
+        img_bev = cv2.flip(cv2.flip(img_bev, 0), 1)
+
+        out_img = merge_rgb_to_bev(img_rgb, img_bev, cfg.img_size)
+
+        # Turn it into rgb again cos cv2 is in bgr form
+        out_img = cv2.cvtColor(out_img, cv2.COLOR_BGR2RGB)
+
+        batch_images.append(out_img)
+
+        if len(batch_images) == num_img:
+            break
+    
+    return np.asarray(batch_images)
 
 def train_one_epoch(train_dataloader, model, optimizer, lr_scheduler, epoch, configs, logger, tb_writer):
     batch_time = AverageMeter('Time', ':6.3f')

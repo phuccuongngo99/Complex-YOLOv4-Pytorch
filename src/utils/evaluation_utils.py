@@ -4,6 +4,8 @@ import tqdm
 
 import torch
 import numpy as np
+from shapely import speedups
+speedups.disable()
 from shapely.geometry import Polygon
 
 sys.path.append('../')
@@ -196,7 +198,6 @@ def iou_rotated_single_vs_multi_boxes_cpu(single_box, multi_boxes):
     :param target_boxes: Numpy array
     :return:
     """
-
     s_x, s_y, s_w, s_l, s_im, s_re = single_box
     s_area = s_w * s_l
     s_yaw = np.arctan2(s_im, s_re)
@@ -214,6 +215,13 @@ def iou_rotated_single_vs_multi_boxes_cpu(single_box, multi_boxes):
         intersection = s_polygon.intersection(m_boxes_polygons[m_idx]).area
         iou_ = intersection / (s_area + targets_areas[m_idx] - intersection + 1e-16)
         ious.append(iou_)
+
+    # Fix bug at start of training
+    # width and height at order of e-15
+    # So it doesn't overlap with itself
+    # Put 1 so that the box will always overlap with itself
+    if torch.equal(single_box, multi_boxes[0,...]):
+        ious[0] = 1.0
 
     return torch.tensor(ious, dtype=torch.float)
 

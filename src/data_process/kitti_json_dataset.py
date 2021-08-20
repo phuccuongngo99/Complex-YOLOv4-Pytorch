@@ -1,29 +1,113 @@
 """
 # -*- coding: utf-8 -*-
 -----------------------------------------------------------------------------------
-# Author: Nguyen Mau Dung
-# DoC: 2020.07.05
-# email: nguyenmaudung93.kstn@gmail.com
+# Author: Ngo Phuc Cuong
+# DoC: 2021.07.28
+# email: phuccuongngo99@gmail.com
 -----------------------------------------------------------------------------------
-# Description: This script for the KITTI dataset
+# Description: This script for the KITTI dataset to load LIDAR Only annotation
+file in json format from this annotation tool: 
+https://github.com/songanz/3D-LiDAR-annotator
 
-# Refer: https://github.com/ghimiredhikura/Complex-YOLOv3
+# Borrowed extensively from:
+https://github.com/maudzung/Complex-YOLOv4-Pytorch
 """
-
+import json
 import sys
 import os
 import random
+from typing import List, Tuple
 
 import numpy as np
 from torch.utils.data import Dataset
 import torch
 import torch.nn.functional as F
 import cv2
+from easydict import EasyDict
 
 sys.path.append('../')
 
 from data_process import transformation, kitti_bev_utils, kitti_data_utils
 import config.kitti_config as cnf
+
+class ObjectJson3d(object):
+    ''' 3d object label for json file from 3D Annotator Tool'''
+    '''
+    An example of box annotation dictionary 
+    {
+    'center': {'x': 3.156369430522359,
+                'y': 8.834011474234416,
+                'z': 1.0342535972595215},
+    'width': 4.475703220592086,
+    'length': 3.2934427372386126,
+    'height': 2.6601858139038086,
+    'angle': 2.4860782874388785,
+    'object_id': 'car'}
+    '''
+
+    def __init__(self, box_annot_dict: dict):
+        box_annot_dict = EasyDict(box_annot_dict)
+
+        # extract label
+        self.type = box_annot_dict.object_id  # 'Car', 'Pedestrian', ...
+        self.cls_id = self.cls_type_to_id(self.type)
+
+        # extract 3d bounding box information
+        self.h = box_annot_dict.height  # box height
+        self.w, self.l = self.annotator_wl_to_lidar_wl(
+                        box_annot_dict.width,
+                        box_annot_dict.length) # box width, length
+        self.t = (box_annot_dict.center.x, 
+                box_annot_dict.center.y, 
+                box_annot_dict.center.z)  # location (x,y,z) in camera coord.
+        
+        # Convert Annotator's yaw angle to Lidar coord's yaw angle
+        self.ry = self.annotator_yaw_to_lidar_yaw(box_annot_dict.angle)
+
+    def cls_type_to_id(self, cls_type) -> int:
+        # Car and Van ==> Car class
+        # Pedestrian and Person_Sitting ==> Pedestrian Class
+        CLASS_NAME_TO_ID = {
+            'Car': 0,
+            'Pedestrian': 1,
+            'Cyclist': 2,
+            'Van': 0,
+            'Person_sitting': 1
+        }
+        if cls_type not in CLASS_NAME_TO_ID.keys():
+            return -1
+        return CLASS_NAME_TO_ID[cls_type]
+
+    def annotator_wl_to_lidar_wl(self, annotator_w: int, annotator_l: int) -> Tuple[int]:
+        '''
+        This will return (lidar_width, lidar_length)
+        '''
+        # For our annotation convention,
+        # Width and height are flipped
+        return annotator_l, annotator_w
+
+
+    def annotator_yaw_to_lidar_yaw(self, annotator_yaw: float) -> float:
+        '''
+        Function to convert angle given in 3D annotation tool
+        to yaw angle in Lidar coordinate
+
+        The return angle will be in range [0, 2pi]
+        '''
+        lidar_y = annotator_yaw
+        lidar_y = (lidar_y + np.pi) % (2 * np.pi)
+        lidar_y = - (lidar_y + np.pi/2)
+        
+        return lidar_y
+
+
+class JsonAnnotUtil:
+    def read_label(label_file: str) -> List[ObjectJson3d]:
+        # Load json file
+        annot_dict = json.load(open(label_file, "r"))
+
+        return [ObjectJson3d(box_annot_dict)
+                for box_annot_dict in annot_dict['bounding boxes']]
 
 
 class KittiDataset(Dataset):
@@ -78,15 +162,9 @@ class KittiDataset(Dataset):
 
         sample_id = int(self.sample_id_list[index])
         lidarData = self.get_lidar(sample_id)
-        if self.lidar_transforms is not None:
-            lidarData, _ = self.lidar_transforms(lidarData, np.zeros((1,7)))
-        
         b = kitti_bev_utils.removePoints(lidarData, cnf.boundary)
         rgb_map = kitti_bev_utils.makeBVFeature(b, cnf.DISCRETIZATION_X, cnf.DISCRETIZATION_Y, cnf.boundary)
         img_file = os.path.join(self.image_dir, '{:06d}.png'.format(sample_id))
-
-        if self.aug_transforms is not None:
-            rgb_map, _ = self.aug_transforms(rgb_map, np.zeros((1,8)))
 
         return img_file, rgb_map
 
@@ -96,6 +174,8 @@ class KittiDataset(Dataset):
         sample_id = int(self.sample_id_list[index])
 
         lidarData = self.get_lidar(sample_id)
+        # We override get_label method here to read
+        # from json file and return a list of our custom object
         objects = self.get_label(sample_id)
         calib = self.get_calib(sample_id)
 
@@ -104,6 +184,8 @@ class KittiDataset(Dataset):
         if not noObjectLabels:
             labels[:, 1:] = transformation.camera_to_lidar_box(labels[:, 1:], calib.V2C, calib.R0,
                                                                calib.P)  # convert rect cam to velo cord
+
+        # TODO: Check whether other augmentation agrees with us or not
 
         if self.lidar_transforms is not None:
             lidarData, labels[:, 1:] = self.lidar_transforms(lidarData, labels[:, 1:])
@@ -190,10 +272,13 @@ class KittiDataset(Dataset):
             objects = self.get_label(sample_id)
             calib = self.get_calib(sample_id)
             labels, noObjectLabels = kitti_bev_utils.read_labels_for_bevbox(objects)
+
+            print(labels[..., 1:4])
             if not noObjectLabels:
                 labels[:, 1:] = transformation.camera_to_lidar_box(labels[:, 1:], calib.V2C, calib.R0,
                                                                    calib.P)  # convert rect cam to velo cord
 
+            print(labels[..., 1:4])
             valid_list = []
             for i in range(labels.shape[0]):
                 if int(labels[i, 0]) in cnf.CLASS_NAME_TO_ID.values():
@@ -253,7 +338,13 @@ class KittiDataset(Dataset):
         # assert os.path.isfile(calib_file)
         return kitti_data_utils.Calibration(calib_file)
 
+    # Override this method
     def get_label(self, idx):
-        label_file = os.path.join(self.label_dir, '{:06d}.txt'.format(idx))
+        label_file = os.path.join(self.label_dir, '{:06d}.json'.format(idx))
         # assert os.path.isfile(label_file)
-        return kitti_data_utils.read_label(label_file)
+        return JsonAnnotUtil.read_label(label_file)
+
+    # def get_label(self, idx):
+    #     label_file = os.path.join(self.label_dir, '{:06d}.txt'.format(idx))
+    #     # assert os.path.isfile(label_file)
+    #     return kitti_data_utils.read_label(label_file)

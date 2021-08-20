@@ -2,13 +2,14 @@ import sys
 import os
 
 import numpy as np
+from shapely import speedups
+speedups.disable()
 from shapely.geometry import Polygon
 
 sys.path.append('../')
 
 from data_process import transformation, kitti_bev_utils, kitti_data_utils
 import config.kitti_config as cnf
-
 
 class Find_Anchors():
     def __init__(self, dataset_dir, img_size, use_yaw_label=False):
@@ -164,9 +165,20 @@ class Find_Anchors():
 
 
 if __name__ == '__main__':
-    dataset_dir = '../../dataset/kitti'
+    import argparse
+    from easydict import EasyDict as edict
+
+    parser = argparse.ArgumentParser(description='Complexer YOLO Implementation')
+
+    parser.add_argument('--img_size', type=int, default=608,
+                        help='the size of input image')
+    parser.add_argument('--dataset_dir', type=str, default='../../dataset/kitti',
+                        help='Path to dataset')
+    
+    configs = edict(vars(parser.parse_args()))
+    dataset_dir = configs.dataset_dir
     num_anchors = 9
-    img_size = 608
+    img_size = configs.img_size
     use_yaw_label = True
     anchors_solver = Find_Anchors(dataset_dir, img_size, use_yaw_label=use_yaw_label)
 

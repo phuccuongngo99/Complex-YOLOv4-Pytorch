@@ -16,16 +16,19 @@ from torch.utils.data import DataLoader
 sys.path.append('../')
 
 from data_process.kitti_dataset import KittiDataset
-from data_process.transformation import Compose, OneOf, Random_Rotation, Random_Scaling, Horizontal_Flip, Cutout
+from data_process.transformation import Compose, OneOf, Random_Rotation, Random_Scaling, Horizontal_Flip, Cutout, Random_Translate
 
 
 def create_train_dataloader(configs):
     """Create dataloader for training"""
 
-    train_lidar_transforms = OneOf([
-        Random_Rotation(limit_angle=20., p=1.0),
-        Random_Scaling(scaling_range=(0.95, 1.05), p=1.0)
-    ], p=0.66)
+    train_lidar_transforms = Compose([
+        Random_Scaling(scaling_range=(0.50, 1.50), p=0.8),
+        Random_Rotation(limit_angle=90., p=0.8),
+        Random_Translate(translate_range_x=(-0.5, 0.5),
+                        translate_range_y=(-0.5, 0.5),
+                        p=0.8)
+    ], p=0.95)
 
     train_aug_transforms = Compose([
         Horizontal_Flip(p=configs.hflip_prob),
@@ -37,6 +40,7 @@ def create_train_dataloader(configs):
                                  aug_transforms=train_aug_transforms, multiscale=configs.multiscale_training,
                                  num_samples=configs.num_samples, mosaic=configs.mosaic,
                                  random_padding=configs.random_padding)
+
     train_sampler = None
     if configs.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -49,9 +53,24 @@ def create_train_dataloader(configs):
 
 def create_val_dataloader(configs):
     """Create dataloader for validation"""
+    val_lidar_transforms = Compose([
+        Random_Scaling(scaling_range=(0.85, 1.15), p=0.8),
+        Random_Rotation(limit_angle=40., p=0.8),
+        Random_Translate(translate_range_x=(-0.2, 0.2),
+                        translate_range_y=(-0.2, 0.2),
+                        p=0.8)
+    ], p=0.95)
+
+    val_aug_transforms = Compose([
+        Horizontal_Flip(p=configs.hflip_prob),
+        Cutout(n_holes=configs.cutout_nholes, ratio=configs.cutout_ratio, fill_value=configs.cutout_fill_value,
+               p=configs.cutout_prob)
+    ], p=1.)
+
     val_sampler = None
-    val_dataset = KittiDataset(configs.dataset_dir, mode='val', lidar_transforms=None, aug_transforms=None,
-                               multiscale=False, num_samples=configs.num_samples, mosaic=False, random_padding=False)
+
+    val_dataset = KittiDataset(configs.dataset_dir, mode='val', lidar_transforms=val_lidar_transforms, aug_transforms=val_aug_transforms,
+                               multiscale=configs.multiscale_training, num_samples=configs.num_samples, mosaic=False, random_padding=False)
     if configs.distributed:
         val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
     val_dataloader = DataLoader(val_dataset, batch_size=configs.batch_size, shuffle=False,
@@ -63,9 +82,16 @@ def create_val_dataloader(configs):
 
 def create_test_dataloader(configs):
     """Create dataloader for testing phase"""
+    test_lidar_transforms = Compose([
+        Random_Rotation(limit_angle=20., p=1.0),
+        Random_Scaling(scaling_range=(0.95, 1.05), p=1.0),
+        Random_Translate(translate_range_x=(-0.2, 0.2),
+                        translate_range_y=(-0.2, 0.2),
+                        p=1.0)
+    ], p=0.0)
 
-    test_dataset = KittiDataset(configs.dataset_dir, mode='test', lidar_transforms=None, aug_transforms=None,
-                                multiscale=False, num_samples=configs.num_samples, mosaic=False, random_padding=False)
+    test_dataset = KittiDataset(configs.dataset_dir, mode='test', lidar_transforms=test_lidar_transforms, aug_transforms=None,
+                                multiscale=configs.multiscale_training, num_samples=configs.num_samples, mosaic=False, random_padding=False)
     test_sampler = None
     if configs.distributed:
         test_sampler = torch.utils.data.distributed.DistributedSampler(test_dataset)
@@ -86,13 +112,14 @@ if __name__ == '__main__':
     import data_process.kitti_bev_utils as bev_utils
     from data_process import kitti_data_utils
     from utils.visualization_utils import show_image_with_boxes, merge_rgb_to_bev, invert_target
+    #import config.kitti_config as cnf
     import config.kitti_config as cnf
 
     parser = argparse.ArgumentParser(description='Complexer YOLO Implementation')
 
     parser.add_argument('--img_size', type=int, default=608,
                         help='the size of input image')
-    parser.add_argument('--hflip_prob', type=float, default=0.,
+    parser.add_argument('--hflip_prob', type=float, default=0.5,
                         help='The probability of horizontal flip')
     parser.add_argument('--cutout_prob', type=float, default=0.,
                         help='The probability of cutout augmentation')
@@ -124,7 +151,8 @@ if __name__ == '__main__':
     configs = edict(vars(parser.parse_args()))
     configs.distributed = False  # For testing
     configs.pin_memory = False
-    configs.dataset_dir = os.path.join('../../', 'dataset', 'kitti')
+    #configs.dataset_dir = os.path.join('../../', 'dataset', 'kitti')
+    configs.dataset_dir = cnf.dataset_dir  
 
     if configs.save_img:
         print('saving validation images')

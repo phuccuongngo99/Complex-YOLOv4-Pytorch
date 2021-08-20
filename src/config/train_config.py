@@ -10,6 +10,7 @@
 
 import os
 import argparse
+import config.kitti_config as cnf
 
 import torch
 from easydict import EasyDict as edict
@@ -149,7 +150,8 @@ def parse_train_configs():
     ####################################################################
     ############## Dataset, logs, Checkpoints dir ######################
     ####################################################################
-    configs.dataset_dir = os.path.join(configs.working_dir, 'dataset', 'kitti')
+    configs.dataset_dir = cnf.dataset_dir
+    #configs.dataset_dir = "/home/deeplearning/Code_2021/AIDrivers/3d_detection/AQC_Dataset/test_3_kitti_split"
     configs.checkpoints_dir = os.path.join(configs.working_dir, 'checkpoints', configs.saved_fn)
     configs.logs_dir = os.path.join(configs.working_dir, 'logs', configs.saved_fn)
 

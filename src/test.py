@@ -25,7 +25,7 @@ from data_process import kitti_data_utils, kitti_bev_utils
 from data_process.kitti_dataloader import create_test_dataloader
 from models.model_utils import create_model
 from utils.misc import make_folder
-from utils.evaluation_utils import post_processing, rescale_boxes, post_processing_v2
+from utils.evaluation_utils import post_processing_v2, rescale_boxes
 from utils.misc import time_synchronized
 from utils.visualization_utils import show_image_with_boxes, merge_rgb_to_bev, predictions_to_kitti_format
 
@@ -78,7 +78,8 @@ def parse_test_configs():
     ##############Dataset, Checkpoints, and results dir configs#########
     ####################################################################
     configs.working_dir = '../'
-    configs.dataset_dir = os.path.join(configs.working_dir, 'dataset', 'kitti')
+    #configs.dataset_dir = cnf.dataset_dir
+    configs.dataset_dir = '/home/deeplearning/Code_2021/AIDrivers/3d_detection/AQC_Dataset/Small_AQC'
 
     if configs.save_test_output:
         configs.results_dir = os.path.join(configs.working_dir, 'results', configs.saved_fn)
@@ -95,7 +96,7 @@ if __name__ == '__main__':
     model.print_network()
     print('\n\n' + '-*=' * 30 + '\n\n')
     assert os.path.isfile(configs.pretrained_path), "No file at {}".format(configs.pretrained_path)
-    model.load_state_dict(torch.load(configs.pretrained_path))
+    model.load_state_dict(torch.load(configs.pretrained_path, map_location="cuda:0"))
 
     configs.device = torch.device('cpu' if configs.no_cuda else 'cuda:{}'.format(configs.gpu_idx))
     model = model.to(device=configs.device)
@@ -103,6 +104,15 @@ if __name__ == '__main__':
     out_cap = None
 
     model.eval()
+
+    # Just to test out some custom config for validation dataloader
+    configs.batch_size = 1
+    configs.hflip_prob = 0.5
+    configs.multiscale_training = False
+    configs.cutout_nholes = 1
+    configs.cutout_prob = 0.
+    configs.cutout_fill_value = 0.
+    configs.cutout_ratio = 0.3
 
     test_dataloader = create_test_dataloader(configs)
     with torch.no_grad():
@@ -136,7 +146,7 @@ if __name__ == '__main__':
 
             img_bev = cv2.flip(cv2.flip(img_bev, 0), 1)
 
-            out_img = merge_rgb_to_bev(img_rgb, img_bev, output_width=608)
+            out_img = merge_rgb_to_bev(img_rgb, img_bev, configs.img_size)
 
             print('\tDone testing the {}th sample, time: {:.1f}ms, speed {:.2f}FPS'.format(batch_idx, (t2 - t1) * 1000,
                                                                                            1 / (t2 - t1)))
